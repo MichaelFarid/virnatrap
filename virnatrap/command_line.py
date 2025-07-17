@@ -38,6 +38,10 @@ def virnatrap_predict():
         "--model_path", type=str,
         help="Path to TensorFlow model for scoring reads", required=False
     )
+    parser.add_argument(
+        "--threshold", type=float,
+        help="Prediction score threshold for selecting seed reads", default=0.7
+    )
 
     args = parser.parse_args()
     inpath = args.input
@@ -55,6 +59,8 @@ def virnatrap_predict():
     fastmode = bool(args.fastmode)
     multi_proc = bool(args.multi_proc)
     num_threads = args.num_threads
+    # Set threshold in virnatrap module
+    virnatrap.THRESHOLD = args.threshold
 
     # Determine model path
     if args.model_path and isfile(args.model_path):
@@ -66,7 +72,7 @@ def virnatrap_predict():
             print(f"Model '{args.model_path}' not found; using default model at {default_model}.")
 
     # Run the pipeline
-    print(f"Reading FASTQ files from '{inpath}'...")
+    print(f"Reading FASTQ files from '{inpath}' with threshold {virnatrap.THRESHOLD}...")
     run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads)
     print("Done.")
 
