@@ -81,18 +81,23 @@ static bool find_sub_right(int *used, const char *sb0,
                            int *best_idx, int *best_pos) {
     kmer_entry *e = get_bucket(encode_kmer(sb0));
     if (!e) return false;
-    int min_pos = SEGMENT_LENGTH, idx = -1;
+    int min_pos = SEGMENT_LENGTH;
+    int idx = -1;
     for (int k = 0; k < e->count; ++k) {
         int rid = e->idxs[k];
         if (used[rid]) continue;
         char *ptr = strstr(reads[rid], sb0);
         if (ptr) {
             int pos = ptr - reads[rid];
-            if (pos >= 0 && pos < min_pos) { min_pos = pos; idx = rid; }
+            if (pos >= 0 && pos < min_pos) {
+                min_pos = pos;
+                idx = rid;
+            }
         }
     }
     if (idx < 0) return false;
-    *best_idx = idx; *best_pos = min_pos;
+    *best_idx = idx;
+    *best_pos = min_pos;
     return true;
 }
 
@@ -102,18 +107,23 @@ static bool find_sub_left(int *used, const char *sb0,
                           int *best_idx, int *best_pos) {
     kmer_entry *e = get_bucket(encode_kmer(sb0));
     if (!e) return false;
-    int max_pos = -1, idx = -1;
+    int max_pos = -1;
+    int idx = -1;
     for (int k = 0; k < e->count; ++k) {
         int rid = e->idxs[k];
         if (used[rid]) continue;
         char *ptr = strstr(reads[rid], sb0);
         if (ptr) {
             int pos = ptr - reads[rid];
-            if (pos > max_pos) { max_pos = pos; idx = rid; }
+            if (pos > max_pos) {
+                max_pos = pos;
+                idx = rid;
+            }
         }
     }
     if (idx < 0) return false;
-    *best_idx = idx; *best_pos = max_pos;
+    *best_idx = idx;
+    *best_pos = max_pos;
     return true;
 }
 
@@ -127,7 +137,8 @@ static struct ret assemble_right(const char *seed, char **reads,
     char *contig = malloc(MAX_CONTIG_LEN);
     memcpy(contig, seed, SEGMENT_LENGTH);
     int clen = SEGMENT_LENGTH;
-    float totsc = scores[0]; int numel = 1;
+    float totsc = scores[0];
+    int numel = 1;
     char sb0[SUBLEN+1];
     memcpy(sb0, contig + clen - SUBLEN, SUBLEN);
     sb0[SUBLEN] = '\0';
@@ -138,7 +149,8 @@ static struct ret assemble_right(const char *seed, char **reads,
         memcpy(contig + clen, reads[idx] + pos + SUBLEN, SEGMENT_LENGTH);
         clen += SEGMENT_LENGTH;
         memcpy(sb0, contig + clen - SUBLEN, SUBLEN);
-        totsc += scores[idx]; numel++;
+        totsc += scores[idx];
+        numel++;
     }
     contig[clen] = '\0';
     return (struct ret){contig, clen, numel, totsc};
@@ -152,20 +164,26 @@ static struct ret assemble_left(const char *seed, char **reads,
     int start = MAX_CONTIG_LEN - SEGMENT_LENGTH;
     memcpy(contig + start, seed, SEGMENT_LENGTH);
     int clen = SEGMENT_LENGTH;
-    float totsc = scores[0]; int numel = 1;
-    char sb0[SUBLEN+1]; memcpy(sb0, seed, SUBLEN); sb0[SUBLEN] = '\0';
+    float totsc = scores[0];
+    int numel = 1;
+    char sb0[SUBLEN+1];
+    memcpy(sb0, seed, SUBLEN);
+    sb0[SUBLEN] = '\0';
     for (int it = 0; it < RUNS && totsc/numel > SCORE_THR; ++it) {
         int idx, pos;
         if (!find_sub_left(used, sb0, reads, num_reads, &idx, &pos)) break;
         used[idx] = 1;
         memcpy(contig + start - pos, reads[idx], pos);
-        start -= pos; clen += pos;
+        start -= pos;
+        clen += pos;
         memcpy(sb0, reads[idx], SUBLEN);
-        totsc += scores[idx]; numel++;
+        totsc += scores[idx];
+        numel++;
     }
     char *out = malloc(clen + 1);
     memcpy(out, contig + start, clen);
-    out[clen] = '\0'; free(contig);
+    out[clen] = '\0';
+    free(contig);
     return (struct ret){out, clen, numel, totsc};
 }
 
@@ -189,21 +207,28 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
 
     for (int i = 0; i < nvr; ++i) {
         if (seed_used[i]) continue;
-        int *used = calloc(num_reads, sizeof(int));
-        struct ret rr = assemble_right(ch_arr2[i], ch_arr, f_arr2, num_reads, used);
-        struct ret rl = assemble_left(ch_arr2[i], ch_arr, f_arr2, num_reads, used);
-
+        int *used_left  = calloc(num_reads, sizeof(int));
+        int *used_right = calloc(num_reads, sizeof(int));
+        // find seed index
+        int seed_idx = -1;
+        for (int j = 0; j < num_reads; ++j) {
+            if (strcmp(ch_arr[j], ch_arr2[i]) == 0) { seed_idx = j; break; }
+        }
+        if (seed_idx >= 0) {
+            used_left[seed_idx] = 1;
+            used_right[seed_idx] = 1;
+        }
+        struct ret rr = assemble_right(ch_arr2[i], ch_arr, f_arr2, num_reads, used_right);
+        struct ret rl = assemble_left(ch_arr2[i], ch_arr, f_arr2, num_reads, used_left);
         int left_ext_len = rl.len - SEGMENT_LENGTH;
-        int right_len = rr.len;
-        int full_len = left_ext_len + right_len;
-        float avg_sc = (rl.totsc/rl.numel + rr.totsc/rr.numel) * 0.5f;
-
+        int right_len    = rr.len;
+        int full_len     = left_ext_len + right_len;
+        float avg_sc     = (rl.totsc/rl.numel + rr.totsc/rr.numel) * 0.5f;
         if (full_len >= SEGMENT_LENGTH && avg_sc > SCORE_THR) {
             char *full = malloc(full_len + 1);
             memcpy(full, rl.c, left_ext_len);
             memcpy(full + left_ext_len, rr.c, right_len);
             full[full_len] = '\0';
-
             bool is_sub = false;
             for (int k = 0; k < printed_count; ++k) {
                 if (strstr(printed[k], full)) { is_sub = true; break; }
@@ -212,18 +237,23 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
                 printed[printed_count++] = full;
                 fprintf(fp, ">contig_%d[]\n%s\n", i, full);
                 for (int j = 0; j < nvr; ++j) {
-                    if (!seed_used[j] && strstr(full, ch_arr2[j]))
+                    if (!seed_used[j] && strstr(full, ch_arr2[j])) {
                         seed_used[j] = true;
+                    }
                 }
             } else {
                 free(full);
             }
         }
-        free(rr.c); free(rl.c); free(used);
+        free(rr.c);
+        free(rl.c);
+        free(used_left);
+        free(used_right);
     }
 
     for (int k = 0; k < printed_count; ++k) free(printed[k]);
-    free(printed); free(seed_used);
+    free(printed);
+    free(seed_used);
     fclose(fp);
 
     // Cleanup hash table
