@@ -1,5 +1,5 @@
 """
-Model classes and functions to identify viral reads and dump seed reads before contig assembly
+Model classes and functions to identify viral reads and dump seed windows before contig assembly
 """
 # Imports --------------------------------------------------------------------------------------------------------------
 import os
@@ -29,13 +29,13 @@ autograph.set_verbosity(0)
 # Globals -------------------------------------------------------------------------------------------------------------
 DEFAULT_NUC_ORDER = {y: x for x, y in enumerate(["A", "T", "C", "G"])}
 NUCLEOTIDES = list(DEFAULT_NUC_ORDER.keys())
+# Window size to score / dump
 SEGMENT_LENGTH = 48
-SEARCHSUBLEN = 24
+# Minimum contig length (unused here)
+# SEARCHSUBLEN = 24
 PWD = os.getcwd()
 
 # Utility functions ---------------------------------------------------------------------------------------------------
-flatten = lambda l: [item for sublist in l for item in sublist]
-
 def random_base(seq=None):
     return random.choice(NUCLEOTIDES)
 
@@ -60,7 +60,7 @@ def load_virus_model(model_path):
     return load_model(model_path)
 
 def filter_sequences(seqs):
-    bad = ['A'*SEARCHSUBLEN, 'C'*SEARCHSUBLEN, 'G'*SEARCHSUBLEN, 'T'*SEARCHSUBLEN]
+    bad = ['A'*SEGMENT_LENGTH, 'C'*SEGMENT_LENGTH, 'G'*SEGMENT_LENGTH, 'T'*SEGMENT_LENGTH]
     return [s for s in seqs if all(b not in s for b in bad)]
 
 def proc_fastq(infile):
@@ -101,20 +101,29 @@ def extract_contigs(invars, large_file_thr=1000000):
     contig_fn = join(outpath, base.replace('_unmapped.fastq', '_contigs.txt'))
     seed_fn   = join(outpath, base.replace('_unmapped.fastq', '_seeds.txt'))
 
+    # Skip if already processed
     if exists(contig_fn) or exists(seed_fn):
         return 0
 
+    # Load model and process reads
     model = load_virus_model(model_path)
-    encoded_c, seqs = proc_fastq(inpath)
-    scores = list(model.predict(encoded_c))
+    _, seqs = proc_fastq(inpath)
+    # Score each read (use full-read scoring)
+    encodings, _ = proc_fastq(inpath)
+    scores = list(model.predict(encodings))
 
+    # Select seeds above threshold
     seeds = [(seqs[i], scores[i]) for i in range(len(scores)) if scores[i] > THRESHOLD]
 
+    # Dump each window (first 48bp and last 48bp) separately
     with open(seed_fn, 'w') as sf:
-        for seq, score in seeds:
-            sf.write(f">{score}\n{seq}\n")
+        for idx, (seq, score) in enumerate(seeds):
+            first48 = seq[:SEGMENT_LENGTH]
+            last48  = seq[-SEGMENT_LENGTH:]
+            sf.write(f">seed{idx}_thr{score:.4f}_1\n{first48}\n")
+            sf.write(f">seed{idx}_thr{score:.4f}_2\n{last48}\n")
 
-    print(f"Seed reads dumped to {seed_fn} with threshold {THRESHOLD}. Skipping contig assembly here.")
+    print(f"Seed windows dumped to {seed_fn} with threshold {THRESHOLD}.")
     return 1
 
 def run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads, threshold=0.7):
