@@ -72,22 +72,14 @@ static kmer_entry *get_bucket(uint64_t key) {
 
 // Build k-mer index from all reads (length SEGMENT_LENGTH each)
 static void build_kmer_index(char **reads, int num_reads) {
-    fprintf(stderr, "[C] Building k-mer index for %d reads...\n", num_reads);
-    fflush(stderr);
     char buf[SUBLEN+1];
     for (int i = 0; i < num_reads; ++i) {
-        if (i % 10 == 0) {
-            fprintf(stderr, "[C] Indexed %d/%d reads\n", i, num_reads);
-            fflush(stderr);
-        }
         for (int j = 0; j <= SEGMENT_LENGTH - SUBLEN; ++j) {
             memcpy(buf, reads[i] + j, SUBLEN);
             buf[SUBLEN] = '\0';
             add_kmer(encode_kmer(buf), i);
         }
     }
-    fprintf(stderr, "[C] K-mer index built\n");
-    fflush(stderr);
 }
 
 // Find best right extension for sb0: returns true if found
@@ -162,7 +154,7 @@ static struct ret assemble_right(const char *seed, char **reads, float *scores, 
     int cnt = 0;
     while (cnt < RUNS && (totsc/numel) > SCORE_THR) {
         int idx, pos;
-        if (!find_sub_right(used, sb0, readings, num_reads, &idx, &pos)) break;
+        if (!find_sub_right(used, sb0, reads, num_reads, &idx, &pos)) break;
         used[idx] = 1;
         memcpy(contig + clen, reads[idx] + pos + SUBLEN, SEGMENT_LENGTH);
         clen += SEGMENT_LENGTH;
