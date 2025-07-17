@@ -155,6 +155,7 @@ def assemble_right(read, read_list,score_list,score_read = 1,sc_thr = 0.5,runs=5
     :param sublen:
     :return:
     '''
+    print("test worked")
     scl = [score_read]
     contig = read
     sb0 = read[len(read)-sublen:]
@@ -361,7 +362,7 @@ def extract_contigs(invars,large_file_thr=1000000):
 
 def run_virna_pred(inpath,outpath,fastmode,multi_proc,model_path,num_threads):
 
-
+    print("starting now")
     ##get input fastq files
     infastq = list(set([i for i in glob.glob(inpath + '*.fastq') if '.fastq' in i]))
 
