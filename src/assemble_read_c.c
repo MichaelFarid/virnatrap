@@ -64,6 +64,11 @@ static kmer_entry *get_bucket(kmer_t key) {
     return NULL;
 }
 
+// Forward declarations for extension helpers
+static bool find_sub_right(int *used, const char *sb0, char **reads, int num_reads, int *best_idx, int *best_pos);
+static bool find_sub_left(int *used, const char *sb0, char **reads, int num_reads, int *best_idx, int *best_pos);
+}
+
 // Build index from reads
 static void build_kmer_index(char **reads, int n) {
     for (int i = 0; i < n; ++i)
