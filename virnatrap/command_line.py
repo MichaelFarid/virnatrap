@@ -1,106 +1,74 @@
 import sys
 import os
 from os.path import isdir, isfile
-from virnatrap import run_virna_pred
+from .virnatrap import run_virna_pred
 import argparse
 import virnatrap
 
-# Constants ------------------------------------------------------------------------------------------------------------
+# CLI script for dumping seed reads before contig assembly
 DESCRIPTION = (
-    "Extract viral contigs from a directory with unmapped RNAseq reads fastq files "
-    "and saves a file with contigs for each fastq in an output directory"
+    "Dump seed reads for external contig assembly from unmapped RNAseq FASTQ files"
 )
+# Determine package directory
 mpath = virnatrap.__file__
-PWD = mpath[:-12]
+PWD = os.path.dirname(mpath)
 
-# Terminal functions ---------------------------------------------------------------------------------------------------
+
 def virnatrap_predict():
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument(
-        "--input", "-i",
-        type=str,
-        help="input directory containing *.fastq files",
-        required=True
+        "--input", type=str, help="Input directory containing FASTQ files", required=True
     )
     parser.add_argument(
-        "--output", "-o",
-        type=str,
-        help="output directory for *_contigs.txt and *_seeds.txt",
-        required=True
+        "--output", type=str, help="Output directory for seed files", required=True
     )
     parser.add_argument(
-        "--fastmode", "-f",
-        type=int,
-        choices=[0,1],
-        default=0,
-        help="1 to use C‐accelerated assembler, 0 to use pure‐Python fallback"
+        "--fastmode", type=int, choices=[0, 1],
+        help="(Ignored) seed dumping does not perform contig assembly", default=0
     )
     parser.add_argument(
-        "--multi_proc", "-m",
-        type=int,
-        choices=[0,1],
-        default=1,
-        help="1 to parallelize across FASTQ files with multiprocessing, 0 to run serially"
+        "--multi_proc", type=int, choices=[0, 1],
+        help="Run in parallel using multiprocessing", default=1
     )
     parser.add_argument(
-        "--num_threads", "-t",
-        type=int,
-        default=48,
-        help="number of worker processes if --multi_proc=1"
+        "--num_threads", type=int,
+        help="Number of worker threads for multiprocessing", default=48
     )
     parser.add_argument(
-        "--model_path",
-        type=str,
-        help="path to your Keras/TensorFlow model (.h5)",
-        required=False
-    )
-    parser.add_argument(
-        "--dump_seeds", 
-        action="store_true",
-        help="just write the 48 bp seeds above threshold to *_seeds.txt and skip contig assembly"
+        "--model_path", type=str,
+        help="Path to TensorFlow model for scoring reads", required=False
     )
 
     args = parser.parse_args()
+    inpath = args.input
+    outpath = args.output
 
-    inpath     = args.input
-    outpath    = args.output
-    fastmode   = bool(args.fastmode)
-    multi_proc = bool(args.multi_proc)
-    num_threads= args.num_threads
-    dump_seeds = args.dump_seeds
-
-    # Validate directories
+    # Validate paths
     if not isdir(inpath):
-        print(f"ERROR: input directory {inpath} not found", file=sys.stderr)
+        print(f"Input directory '{inpath}' not found.")
         sys.exit(1)
     if not isdir(outpath):
-        print(f"ERROR: output directory {outpath} not found", file=sys.stderr)
+        print(f"Output directory '{outpath}' not found.")
         sys.exit(1)
 
-    # Model location
+    # Parse flags
+    fastmode = bool(args.fastmode)
+    multi_proc = bool(args.multi_proc)
+    num_threads = args.num_threads
+
+    # Determine model path
     if args.model_path and isfile(args.model_path):
         model_path = args.model_path
     else:
+        default_model = os.path.join(PWD, 'model', 'model_lr_0.005_pool_5_emb_25_l2_0.02_64.hdf5')
+        model_path = default_model
         if args.model_path:
-            print(f"WARNING: model {args.model_path} not found—using default", file=sys.stderr)
-        model_path = os.path.join(PWD, 'model',
-            'model_lr_0.005_pool_5_emb_25_l2_0.02_64.hdf5'
-        )
+            print(f"Model '{args.model_path}' not found; using default model at {default_model}.")
 
-    print(f"Reading FASTQ files from {inpath}…", file=sys.stderr)
-
-    # Call the main driver
-    run_virna_pred(
-        inpath,
-        outpath,
-        fastmode,
-        multi_proc,
-        model_path,
-        num_threads,
-        dump_seeds
-    )
-
-    print("All done.", file=sys.stderr)
+    # Run the pipeline
+    print(f"Reading FASTQ files from '{inpath}'...")
+    run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads)
+    print("Done.")
 
 
 if __name__ == '__main__':
