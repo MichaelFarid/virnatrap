@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <omp.h>
 
 #define SCORE_THR       0.5f
 #define RUNS            100
@@ -12,7 +11,7 @@
 #define MAX_CONTIG_LEN  ((2*RUNS + 1) * SEGMENT_LENGTH)
 #define TABLE_SIZE      2000003
 
-// k-mer hash table entry
+// Hash table entry for k-mers
 typedef struct kmer_entry {
     uint64_t key;
     int *idxs;
@@ -23,7 +22,7 @@ static kmer_entry *hashtable[TABLE_SIZE] = {NULL};
 
 typedef uint64_t kmer_t;
 
-// Encode a SUBLEN-mer into a 2-bit integer
+// Encode a SUBLEN-mer into a 2-bit packed integer
 static inline kmer_t encode_kmer(const char *kmer) {
     kmer_t x = 0;
     for (int i = 0; i < SUBLEN; ++i) {
@@ -32,13 +31,13 @@ static inline kmer_t encode_kmer(const char *kmer) {
             case 'C': x |= 1; break;
             case 'G': x |= 2; break;
             case 'T': x |= 3; break;
-            default:  break;  // 'A' or 'N'
+            default:  break; // A or N
         }
     }
     return x;
 }
 
-// Insert one k-mer occurrence into the hash table
+// Insert a k-mer occurrence into the hash table
 static void add_kmer(kmer_t key, int idx) {
     uint32_t h = key % TABLE_SIZE;
     for (kmer_entry *e = hashtable[h]; e; e = e->next) {
@@ -57,7 +56,7 @@ static void add_kmer(kmer_t key, int idx) {
     hashtable[h] = e;
 }
 
-// Retrieve bucket for a k-mer key
+// Retrieve the bucket for a given k-mer key
 static kmer_entry *get_bucket(kmer_t key) {
     uint32_t h = key % TABLE_SIZE;
     for (kmer_entry *e = hashtable[h]; e; e = e->next) {
@@ -66,19 +65,8 @@ static kmer_entry *get_bucket(kmer_t key) {
     return NULL;
 }
 
-// Build k-mer index from all reads
-static void build_kmer_index(char **reads, int num_reads) {
-    for (int i = 0; i < num_reads; ++i) {
-        for (int j = 0; j <= SEGMENT_LENGTH - SUBLEN; ++j) {
-            add_kmer(encode_kmer(reads[i] + j), i);
-        }
-    }
-}
-
-// Attempt right extension
-static bool find_sub_right(int *used, const char *sb0,
-                           char **reads, int num_reads,
-                           int *best_idx, int *best_pos) {
+// Try to extend to the right
+static bool find_sub_right(int *used, const char *sb0, char **reads, int num_reads, int *best_idx, int *best_pos) {
     kmer_entry *e = get_bucket(encode_kmer(sb0));
     if (!e) return false;
     int min_pos = SEGMENT_LENGTH;
@@ -101,10 +89,8 @@ static bool find_sub_right(int *used, const char *sb0,
     return true;
 }
 
-// Attempt left extension
-static bool find_sub_left(int *used, const char *sb0,
-                          char **reads, int num_reads,
-                          int *best_idx, int *best_pos) {
+// Try to extend to the left
+static bool find_sub_left(int *used, const char *sb0, char **reads, int num_reads, int *best_idx, int *best_pos) {
     kmer_entry *e = get_bucket(encode_kmer(sb0));
     if (!e) return false;
     int max_pos = -1;
@@ -127,76 +113,65 @@ static bool find_sub_left(int *used, const char *sb0,
     return true;
 }
 
-// Struct for contig assembly result
-struct ret { char *c; int len; int numel; float totsc; };
+// Build k-mer index for all reads
+static void build_kmer_index(char **reads, int num_reads) {
+    for (int i = 0; i < num_reads; ++i) {
+        for (int j = 0; j <= SEGMENT_LENGTH - SUBLEN; ++j) {
+            add_kmer(encode_kmer(reads[i] + j), i);
+        }
+    }
+}
 
-// Extend contig to the right
-static struct ret assemble_right(const char *seed, char **reads,
-                                 float *scores, int num_reads,
-                                 int *used) {
-    int seed_len = strlen(seed);
+// Structure to hold contig assembly result
+typedef struct { char *c; int len; int numel; float totsc; } ret_t;
+
+// Assemble right extension (seed + right)
+static ret_t assemble_right(const char *seed, char **reads, float *scores, int num_reads, int *used) {
+    int sl = strlen(seed);
     char *contig = malloc(MAX_CONTIG_LEN);
-    memcpy(contig, seed, seed_len);
-    int clen = seed_len;
+    memcpy(contig, seed, sl);
+    int clen = sl;
     float totsc = scores[0];
     int numel = 1;
     char sb0[SUBLEN+1];
-    // Init sb0 to last SUBLEN bases of seed
-    if (seed_len >= SUBLEN) {
-        memcpy(sb0, seed + seed_len - SUBLEN, SUBLEN);
-    } else {
-        memset(sb0, 'A', SUBLEN - seed_len);
-        memcpy(sb0 + (SUBLEN - seed_len), seed, seed_len);
-    }
+    memcpy(sb0, seed + sl - SUBLEN, SUBLEN);
     sb0[SUBLEN] = '\0';
-    for (int it = 0; it < RUNS && totsc/numel > SCORE_THR; ++it) {
+    for (int it = 0; it < RUNS && totsc / numel > SCORE_THR; ++it) {
         int idx, pos;
         if (!find_sub_right(used, sb0, reads, num_reads, &idx, &pos)) break;
         used[idx] = 1;
-        int append_len = strlen(reads[idx]) - (pos + SUBLEN);
-        memcpy(contig + clen, reads[idx] + pos + SUBLEN, append_len);
-        clen += append_len;
-        if (clen >= SUBLEN) memcpy(sb0, contig + clen - SUBLEN, SUBLEN);
+        int alen = strlen(reads[idx]) - (pos + SUBLEN);
+        memcpy(contig + clen, reads[idx] + pos + SUBLEN, alen);
+        clen += alen;
+        memcpy(sb0, contig + clen - SUBLEN, SUBLEN);
         sb0[SUBLEN] = '\0';
         totsc += scores[idx];
         numel++;
     }
     contig[clen] = '\0';
-    return (struct ret){contig, clen, numel, totsc};
+    return (ret_t){contig, clen, numel, totsc};
 }
 
-// Extend contig to the left
-static struct ret assemble_left(const char *seed, char **reads,
-                                float *scores, int num_reads,
-                                int *used) {
-    int seed_len = strlen(seed);
+// Assemble left extension (left + seed)
+static ret_t assemble_left(const char *seed, char **reads, float *scores, int num_reads, int *used) {
+    int sl = strlen(seed);
     char *contig = malloc(MAX_CONTIG_LEN);
-    int start = MAX_CONTIG_LEN - seed_len;
-    memcpy(contig + start, seed, seed_len);
-    int clen = seed_len;
+    int start = MAX_CONTIG_LEN - sl;
+    memcpy(contig + start, seed, sl);
+    int clen = sl;
     float totsc = scores[0];
     int numel = 1;
     char sb0[SUBLEN+1];
-    // Init sb0 to first SUBLEN bases of seed
-    if (seed_len >= SUBLEN) {
-        memcpy(sb0, seed, SUBLEN);
-    } else {
-        memcpy(sb0, seed, seed_len);
-        memset(sb0 + seed_len, 'A', SUBLEN - seed_len);
-    }
+    memcpy(sb0, seed, SUBLEN);
     sb0[SUBLEN] = '\0';
-    for (int it = 0; it < RUNS && totsc/numel > SCORE_THR; ++it) {
+    for (int it = 0; it < RUNS && totsc / numel > SCORE_THR; ++it) {
         int idx, pos;
         if (!find_sub_left(used, sb0, reads, num_reads, &idx, &pos)) break;
         used[idx] = 1;
         memcpy(contig + start - pos, reads[idx], pos);
         start -= pos;
         clen += pos;
-        if (pos >= SUBLEN) memcpy(sb0, reads[idx], SUBLEN);
-        else {
-            memcpy(sb0, reads[idx], pos);
-            memset(sb0 + pos, 'A', SUBLEN - pos);
-        }
+        memcpy(sb0, reads[idx], SUBLEN);
         sb0[SUBLEN] = '\0';
         totsc += scores[idx];
         numel++;
@@ -205,54 +180,47 @@ static struct ret assemble_left(const char *seed, char **reads,
     memcpy(out, contig + start, clen);
     out[clen] = '\0';
     free(contig);
-    return (struct ret){out, clen, numel, totsc};
+    return (ret_t){out, clen, numel, totsc};
 }
 
-// Main entry for Python ctypes
+// Main entrypoint called from Python via ctypes
 int assemble_read_loop(float *f_arr, float *f_arr2,
                        char *ch_arr[], char *ch_arr2[],
-                       int seg_len, int num_reads, int nvr,
-                       const char *fname) {
+                       int seg_len, int num_reads,
+                       int nvr, const char *fname) {
     build_kmer_index(ch_arr, num_reads);
-    char outbuf[1024];
-    strncpy(outbuf, fname, sizeof(outbuf)-1);
-    outbuf[sizeof(outbuf)-1] = '\0';
+    // Open output file
+    char outbuf[1024]; strncpy(outbuf, fname, sizeof(outbuf)-1); outbuf[sizeof(outbuf)-1] = '\0';
     FILE *fp = fopen(outbuf, "w");
     if (!fp) { perror("fopen"); return -1; }
-    char **printed = calloc(nvr, sizeof(char*));
-    int printed_count = 0;
+    // Assemble each seed
     for (int i = 0; i < nvr; ++i) {
-        bool skip = false;
-        for (int k = 0; k < printed_count; ++k) {
-            if (strstr(printed[k], ch_arr2[i])) { skip = true; break; }
-        }
-        if (skip) continue;
-        // Determine seed index in full reads
-        int seed_idx = -1;
+        int *usedl = calloc(num_reads, sizeof(int));
+        int *usedr = calloc(num_reads, sizeof(int));
+        // Mark seed as used
         for (int j = 0; j < num_reads; ++j) {
-            if (strcmp(ch_arr[j], ch_arr2[i]) == 0) {
-                seed_idx = j;
-                break;
-            }
+            if (strcmp(ch_arr[j], ch_arr2[i]) == 0) { usedl[j] = usedr[j] = 1; break; }
         }
-        // Prepare separate used arrays for each direction
-        int *used_right = calloc(num_reads, sizeof(int));
-        int *used_left  = calloc(num_reads, sizeof(int));
-        if (seed_idx >= 0) {
-            used_right[seed_idx] = 1;
-            used_left[seed_idx]  = 1;
+        ret_t rr = assemble_right(ch_arr2[i], ch_arr, f_arr2, num_reads, usedr);
+        ret_t rl = assemble_left(ch_arr2[i], ch_arr, f_arr2, num_reads, usedl);
+        free(usedr); free(usedl);
+        int sl = strlen(ch_arr2[i]);
+        int left_ext = rl.len - sl;
+        int right_len = rr.len;
+        int full_len = left_ext + right_len;
+        float avg_sc = (rl.totsc/rl.numel + rr.totsc/rr.numel) * 0.5f;
+        if (full_len >= SEGMENT_LENGTH && avg_sc > SCORE_THR) {
+            char *full = malloc(full_len + 1);
+            memcpy(full, rl.c, left_ext);
+            memcpy(full + left_ext, rr.c, right_len);
+            full[full_len] = '\0';
+            fprintf(fp, ">contig_%d[]\n%s\n", i, full);
+            free(full);
         }
-        // Assemble right (seed + right)
-        struct ret rr = assemble_right(ch_arr2[i], ch_arr, f_arr2, num_reads, used_right);
-        // Assemble left (left + seed)
-        struct ret rl = assemble_left(ch_arr2[i], ch_arr, f_arr2, num_reads, used_left);
-        // Clean up used arrays
-        free(used_right);
-        free(used_left);
+        free(rr.c); free(rl.c);
     }
-    for (int k = 0; k < printed_count; ++k) free(printed[k]);
-    free(printed);
     fclose(fp);
+    // Free hash table
     for (int h = 0; h < TABLE_SIZE; ++h) {
         for (kmer_entry *e = hashtable[h]; e; ) {
             kmer_entry *tmp = e->next;
@@ -264,5 +232,5 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
     return 1;
 }
 
-// Stub for ctypes
-char* assemble_read() { return NULL; }
+// Dummy stub for ctypes lookup
+char *assemble_read() { return NULL; }
