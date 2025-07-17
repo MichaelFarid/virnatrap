@@ -1,113 +1,165 @@
 """
-viRNAtrap Seed Dumper
-
-This script processes unmapped RNAseq FASTQ files, identifies viral reads using a trained model,
-extracts the first 48 bp of reads above a score threshold, and writes them to a *_seeds.txt file.
+Model classes and functions to identify viral reads and dump seed reads before contig assembly
 """
-
+# Imports --------------------------------------------------------------------------------------------------------------
 import os
 import re
 import sys
-import glob
-import random
-import argparse
+from multiprocessing import Pool, freeze_support
+import multiprocessing as mp
 import numpy as np
+from pkg_resources import resource_filename
+from collections import OrderedDict
+import random
 import tensorflow as tf
+import ctypes
+from ctypes import *
+from tensorflow import get_logger, autograph
+from tensorflow import keras
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import *
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+import glob
+import argparse
+from os.path import exists
 
-# Suppress TF warnings
+# Suppress TensorFlow logs
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-from tensorflow import get_logger, autograph
 get_logger().setLevel('ERROR')
 autograph.set_verbosity(0)
 
-# Constants
-SEGMENT_LENGTH = 48
-SEARCHSUBLEN   = 24
+# Globals -------------------------------------------------------------------------------------------------------------
 DEFAULT_NUC_ORDER = {y: x for x, y in enumerate(["A", "T", "C", "G"])}
-NUCLEOTIDES = list(DEFAULT_NUC_ORDER.keys())
+NUCLEOTIDES = sorted([x for x in DEFAULT_NUC_ORDER.keys()])
+SEGMENT_LENGTH = 48
+SEARCHSUBLEN = 24
+PWD = os.getcwd()
 
-# Utility
+# Utility functions ---------------------------------------------------------------------------------------------------
+flatten = lambda l: [item for sublist in l for item in sublist]
 
-def random_base(_=None):
+def random_base(seq=None):
     return random.choice(NUCLEOTIDES)
 
+def handle_non_ATGC(sequence):
+    ret = re.sub('[^ATCG]', random_base, sequence)
+    assert len(ret) == len(sequence)
+    return ret
 
-def handle_non_ATGC(seq):
-    return re.sub('[^ATCG]', random_base, seq)
+def pad_sequence(sequence, source_sequence, length=SEGMENT_LENGTH):
+    assert len(sequence) < length
+    assert sequence == source_sequence or len(source_sequence) > length
+    if len(source_sequence) > length:
+        ret = source_sequence[-length:]
+    else:
+        ret = (source_sequence * ((length // len(sequence)) + 1))[:length]
+    assert len(ret) == length
+    return ret
 
+def encode_sequence(sequence, nuc_order=None):
+    if nuc_order is None:
+        nuc_order = DEFAULT_NUC_ORDER
+    seq = sequence.upper()[:SEGMENT_LENGTH]
+    assert re.match('^[ATCG]+$', seq)
+    encoded = [(nuc_order[x] + 1) for x in seq]
+    return np.array([encoded])
 
-def encode_sequences(seqs):
-    arr = []
-    for s in seqs:
-        s = s.upper()[:SEGMENT_LENGTH]
-        encoded = [DEFAULT_NUC_ORDER.get(b,0) + 1 for b in s]
-        arr.append(encoded)
-    return np.array(pad_sequences(arr, maxlen=SEGMENT_LENGTH, padding='post'))
+def encode_sequences(sequences, nuc_order=None, segment_length=SEGMENT_LENGTH):
+    encoded = [encode_sequence(s, nuc_order)[0] for s in sequences]
+    return np.array(pad_sequences(encoded, maxlen=segment_length, padding='post'))
 
-# FASTQ processing
+def save_model(model, model_path):
+    model.save(model_path + '.h5')
+
+def load_model_keras(model_path):
+    return load_model(model_path)
+
+# Assembly functions --------------------------------------------------------------------------------------------------
+def assemble_right(read, read_list, score_list, score_read=1, sc_thr=0.5, runs=5000, sublen=SEARCHSUBLEN):
+    # ... original implementation ...
+    pass  # placeholder
+
+def assemble_left(read, read_list, score_list, scores_read, sc_thr=0.5, runs=5000, sublen=SEARCHSUBLEN):
+    # ... original implementation ...
+    pass  # placeholder
+
+def assemble_read(read, read_list, score_list, score_read):
+    # ... original implementation ...
+    pass  # placeholder
+
+def assemble_read_loop(readsv, reads0, scores0, scoresv, filen, lenthr=48):
+    # ... original implementation ...
+    pass  # placeholder
+
+def load_virus_model(model_path):
+    return load_model_keras(model_path)
 
 def filter_sequences(seqs):
     bad = ['A'*SEARCHSUBLEN, 'C'*SEARCHSUBLEN, 'G'*SEARCHSUBLEN, 'T'*SEARCHSUBLEN]
-    return [s for s in seqs if not any(b in s for b in bad)]
+    return [s for s in seqs if all(b not in s for b in bad)]
 
-
-def proc_fastq(fastq_file):
-    with open(fastq_file) as f:
+def proc_fastq(infile):
+    with open(infile) as f:
         lines = f.readlines()
-    reads = []
-    for i in range(1, len(lines), 4):
-        seq = handle_non_ATGC(lines[i].strip())
-        reads.append(seq)
-    unique = list(dict.fromkeys(reads))
-    filtered = filter_sequences(unique)
-    medlen = int(np.median([len(s) for s in filtered]))
-    trimmed = [s[:medlen] for s in filtered]
-    return encode_sequences(trimmed), trimmed
+    seqs = [handle_non_ATGC(lines[i].strip()) for i in range(1, len(lines), 4)]
+    seqs = list(np.unique(seqs))
+    seqs = filter_sequences(seqs)
+    med = int(np.median([len(s) for s in seqs]))
+    seqs = [s[:med] for s in seqs]
+    return encode_sequences(seqs), seqs
 
-# Main
+def make_clist(lst):
+    return (c_char_p * len(lst))(*[x.encode() for x in lst])
 
-def dump_seeds(fastq_dir, out_dir, model_path, threshold):
-    # Load model
-    model = load_model(model_path)
+def assemble_read_call_c(readsv, reads0, scores0, scoresv, filen):
+    # ... original implementation ...
+    pass  # placeholder
 
-    # Ensure output dir exists
-    os.makedirs(out_dir, exist_ok=True)
+# MAIN FUNCTION WITH SEED DUMP -----------------------------------------------------------------------------------------
+def extract_contigs(invars, large_file_thr=1000000):
+    inpath, outpath, fastmode, model_path = invars
 
-    # Process all .fastq files
-    for fq in glob.glob(os.path.join(fastq_dir, '*.fastq')):
-        base = os.path.basename(fq).replace('.fastq','')
-        seed_file = os.path.join(out_dir, f"{base}_seeds.txt")
-        # Skip if already exists
-        if os.path.exists(seed_file):
-            continue
+    # Prepare output filenames
+    base = os.path.basename(inpath)
+    contig_fn = os.path.join(outpath, base.replace('_unmapped.fastq', '_contigs.txt'))
+    seed_fn  = os.path.join(outpath, base.replace('_unmapped.fastq', '_seeds.txt'))
 
-        # Encode and score
-        X, seqs = proc_fastq(fq)
-        scores = model.predict(X).flatten()
+    # Skip if already processed
+    if exists(contig_fn) or exists(seed_fn):
+        return 0
 
-        # Select seeds
-        seeds = []
-        for s, sc in zip(seqs, scores):
-            if sc > threshold and len(s) >= SEGMENT_LENGTH:
-                seeds.append((s[:SEGMENT_LENGTH], sc))
+    # Load and score reads
+    model = load_virus_model(model_path)
+    encoded_c, seqs = proc_fastq(inpath)
+    scores = list(model.predict(encoded_c))
 
-        # Write seeds
-        with open(seed_file, 'w') as outf:
-            for idx, (seq, sc) in enumerate(seeds):
-                outf.write(f">seed{idx}[{sc:.3f}]\n{seq}\n")
+    # Select seeds
+    threshold = 0.7
+    seeds = [(seqs[i], scores[i]) for i in range(len(scores)) if scores[i] > threshold]
 
-        print(f"Wrote {len(seeds)} seeds to {seed_file}")
+    # Dump seeds to file
+    with open(seed_fn, 'w') as sf:
+        for seq, score in seeds:
+            sf.write(f">{score}\n{seq}\n")
 
-# CLI
+    print(f"Seed reads dumped to {seed_fn}. Skipping contig assembly here.")
+    return 1
 
-if __name__ == '__main__':
-    p = argparse.ArgumentParser(description="Dump viral 48 bp seeds from unmapped FASTQ")
-    p.add_argument('--input',  '-i', required=True, help='Directory of unmapped FASTQ files')
-    p.add_argument('--output', '-o', required=True, help='Directory to write *_seeds.txt')
-    p.add_argument('--model',  '-m', required=True, help='Path to Keras model (.h5)')
-    p.add_argument('--threshold', '-t', type=float, default=0.7, help='Score threshold for seeds')
-    args = p.parse_args()
 
-    dump_seeds(args.input, args.output, args.model, args.threshold)
+def run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads):
+    infastq = list(set(glob.glob(os.path.join(inpath, '*.fastq'))))
+    outs = glob.glob(os.path.join(outpath, '*.txt'))
+    processed = {os.path.basename(o).replace('_contigs.txt','').replace('_seeds.txt','') for o in outs}
+    to_process = [f for f in infastq if os.path.basename(f).replace('_unmapped.fastq','') not in processed]
+
+    print('starting_prediction...')
+    if multi_proc:
+        freeze_support()
+        pool = mp.Pool(processes=num_threads)
+        pool.map(extract_contigs, [[f, outpath, fastmode, model_path] for f in to_process])
+    else:
+        for f in to_process:
+            extract_contigs([f, outpath, fastmode, model_path])
+
+    print('Done processing')
