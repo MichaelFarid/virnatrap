@@ -24,6 +24,8 @@ import glob
 import numpy as np
 import argparse
 from os.path import exists
+from collections import defaultdict
+
 
 DESCRIPTION = "Extract viral contigs from a directory with unmapped RNAseq reads fastq files and saves a file with contigs for each fastq in an output directory"
 
@@ -159,8 +161,11 @@ def assemble_right(read, read_list,score_list,score_read = 1,sc_thr = 0.5,runs=5
     flag = True
     cnt = 0
     while flag and cnt<runs:
-
-        ids = [i for i in range(len(read_list)) if sb0 in read_list[i]]
+        kmer_index = defaultdict(list)
+        for idx, seq in enumerate(raw_reads):
+            for i in range(len(seq) - SEARCHSUBLEN + 1):
+                kmer_index[seq[i:i+SEARCHSUBLEN]].append(idx)
+        ids = kmer_index.get(sb0, [])
         strings_with_substring = [read_list[i] for i in ids]
         score0 = [score_list[i] for i in ids]
         pos = [sb.find(sb0) for sb in strings_with_substring]
