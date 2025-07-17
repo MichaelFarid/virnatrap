@@ -227,24 +227,28 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
             if (strstr(printed[k], ch_arr2[i])) { skip = true; break; }
         }
         if (skip) continue;
-        int *used = calloc(num_reads, sizeof(int));
-        struct ret rr = assemble_right(ch_arr2[i], ch_arr, f_arr2, num_reads, used);
-        struct ret rl = assemble_left(ch_arr2[i], ch_arr, f_arr2, num_reads, used);
-        int left_ext = rl.len - strlen(ch_arr2[i]);
-        int right_len = rr.len;
-        int full_len = left_ext + right_len;
-        float avg_sc = (rl.totsc/rl.numel + rr.totsc/rr.numel) * 0.5f;
-        if (full_len >= SEGMENT_LENGTH && avg_sc > SCORE_THR) {
-            char *full = malloc(full_len + 1);
-            memcpy(full, rl.c, left_ext);
-            memcpy(full + left_ext, rr.c, right_len);
-            full[full_len] = '\0';
-            printed[printed_count++] = full;
-            fprintf(fp, ">contig_%d[]\n%s\n", i, full);
+        // Determine seed index in full reads
+        int seed_idx = -1;
+        for (int j = 0; j < num_reads; ++j) {
+            if (strcmp(ch_arr[j], ch_arr2[i]) == 0) {
+                seed_idx = j;
+                break;
+            }
         }
-        free(rr.c);
-        free(rl.c);
-        free(used);
+        // Prepare separate used arrays for each direction
+        int *used_right = calloc(num_reads, sizeof(int));
+        int *used_left  = calloc(num_reads, sizeof(int));
+        if (seed_idx >= 0) {
+            used_right[seed_idx] = 1;
+            used_left[seed_idx]  = 1;
+        }
+        // Assemble right (seed + right)
+        struct ret rr = assemble_right(ch_arr2[i], ch_arr, f_arr2, num_reads, used_right);
+        // Assemble left (left + seed)
+        struct ret rl = assemble_left(ch_arr2[i], ch_arr, f_arr2, num_reads, used_left);
+        // Clean up used arrays
+        free(used_right);
+        free(used_left);
     }
     for (int k = 0; k < printed_count; ++k) free(printed[k]);
     free(printed);
