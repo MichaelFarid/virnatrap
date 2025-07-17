@@ -141,7 +141,6 @@ static struct ret assemble_right(const char *seed, char **reads,
     float totsc = scores[0];
     int numel = 1;
     char sb0[SUBLEN+1];
-    // Init sb0 to last SUBLEN bases of seed
     if (seed_len >= SUBLEN) {
         memcpy(sb0, seed + seed_len - SUBLEN, SUBLEN);
     } else {
@@ -156,7 +155,7 @@ static struct ret assemble_right(const char *seed, char **reads,
         int append_len = strlen(reads[idx]) - (pos + SUBLEN);
         memcpy(contig + clen, reads[idx] + pos + SUBLEN, append_len);
         clen += append_len;
-        if (clen >= SUBLEN) memcpy(sb0, contig + clen - SUBLEN, SUBLEN);
+        memcpy(sb0, contig + clen - SUBLEN, SUBLEN);
         sb0[SUBLEN] = '\0';
         totsc += scores[idx];
         numel++;
@@ -177,7 +176,6 @@ static struct ret assemble_left(const char *seed, char **reads,
     float totsc = scores[0];
     int numel = 1;
     char sb0[SUBLEN+1];
-    // Init sb0 to first SUBLEN bases of seed
     if (seed_len >= SUBLEN) {
         memcpy(sb0, seed, SUBLEN);
     } else {
@@ -192,11 +190,7 @@ static struct ret assemble_left(const char *seed, char **reads,
         memcpy(contig + start - pos, reads[idx], pos);
         start -= pos;
         clen += pos;
-        if (pos >= SUBLEN) memcpy(sb0, reads[idx], SUBLEN);
-        else {
-            memcpy(sb0, reads[idx], pos);
-            memset(sb0 + pos, 'A', SUBLEN - pos);
-        }
+        memcpy(sb0, reads[idx], SUBLEN);
         sb0[SUBLEN] = '\0';
         totsc += scores[idx];
         numel++;
@@ -206,6 +200,13 @@ static struct ret assemble_left(const char *seed, char **reads,
     out[clen] = '\0';
     free(contig);
     return (struct ret){out, clen, numel, totsc};
+}
+
+// Comparison for sorting by length
+typedef struct { char *seq; int idx; int len; } result_t;
+static int cmp_result(const void *a, const void *b) {
+    const result_t *ra = a, *rb = b;
+    return rb->len - ra->len;
 }
 
 // Main entry for Python ctypes
@@ -219,18 +220,21 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
     outbuf[sizeof(outbuf)-1] = '\0';
     FILE *fp = fopen(outbuf, "w");
     if (!fp) { perror("fopen"); return -1; }
-    char **printed = calloc(nvr, sizeof(char*));
-    int printed_count = 0;
+
+    // Collect contigs
+    result_t *results = malloc(nvr * sizeof(result_t));
+    int rc = 0;
     for (int i = 0; i < nvr; ++i) {
-        bool skip = false;
-        for (int k = 0; k < printed_count; ++k) {
-            if (strstr(printed[k], ch_arr2[i])) { skip = true; break; }
+        int *usedl = calloc(num_reads, sizeof(int));
+        int *usedr = calloc(num_reads, sizeof(int));
+        for (int j = 0; j < num_reads; ++j) {
+            if (strcmp(ch_arr[j], ch_arr2[i]) == 0) usedl[j] = usedr[j] = 1;
         }
-        if (skip) continue;
-        int *used = calloc(num_reads, sizeof(int));
-        struct ret rr = assemble_right(ch_arr2[i], ch_arr, f_arr2, num_reads, used);
-        struct ret rl = assemble_left(ch_arr2[i], ch_arr, f_arr2, num_reads, used);
-        int left_ext = rl.len - strlen(ch_arr2[i]);
+        struct ret rr = assemble_right(ch_arr2[i], ch_arr, f_arr2, num_reads, usedr);
+        struct ret rl = assemble_left(ch_arr2[i], ch_arr, f_arr2, num_reads, usedl);
+        free(usedl); free(usedr);
+        int sl = strlen(ch_arr2[i]);
+        int left_ext = rl.len - sl;
         int right_len = rr.len;
         int full_len = left_ext + right_len;
         float avg_sc = (rl.totsc/rl.numel + rr.totsc/rr.numel) * 0.5f;
@@ -239,21 +243,37 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
             memcpy(full, rl.c, left_ext);
             memcpy(full + left_ext, rr.c, right_len);
             full[full_len] = '\0';
-            printed[printed_count++] = full;
-            fprintf(fp, ">contig_%d[]\n%s\n", i, full);
+            results[rc++] = (result_t){full, i, full_len};
         }
-        free(rr.c);
-        free(rl.c);
-        free(used);
+        free(rr.c); free(rl.c);
     }
-    for (int k = 0; k < printed_count; ++k) free(printed[k]);
-    free(printed);
+
+    // Sort and print unique
+    qsort(results, rc, sizeof(result_t), cmp_result);
+    char **printed = calloc(rc, sizeof(char*));
+    int pc = 0;
+    for (int i = 0; i < rc; ++i) {
+        char *s = results[i].seq;
+        bool is_sub = false;
+        for (int j = 0; j < pc; ++j) {
+            if (strstr(printed[j], s)) { is_sub = true; break; }
+        }
+        if (!is_sub) {
+            fprintf(fp, ">contig_%d[]\n%s\n", results[i].idx, s);
+            printed[pc++] = s;
+        } else {
+            free(s);
+        }
+    }
+
+    // Cleanup
+    for (int i = 0; i < pc; ++i) free(printed[i]);
+    free(printed); free(results);
     fclose(fp);
     for (int h = 0; h < TABLE_SIZE; ++h) {
         for (kmer_entry *e = hashtable[h]; e; ) {
             kmer_entry *tmp = e->next;
-            free(e->idxs);
-            free(e);
+            free(e->idxs); free(e);
             e = tmp;
         }
     }
