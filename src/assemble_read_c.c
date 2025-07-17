@@ -225,6 +225,10 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
     result_t *results = malloc(nvr * sizeof(result_t));
     int rc = 0;
     for (int i = 0; i < nvr; ++i) {
+        // Progress indicator
+        fprintf(stderr, "[Progress] Seed %d of %d
+", i+1, nvr);
+        fflush(stderr);
         int *usedl = calloc(num_reads, sizeof(int));
         int *usedr = calloc(num_reads, sizeof(int));
         for (int j = 0; j < num_reads; ++j) {
@@ -259,7 +263,8 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
             if (strstr(printed[j], s)) { is_sub = true; break; }
         }
         if (!is_sub) {
-            fprintf(fp, ">contig_%d[]\n%s\n", results[i].idx, s);
+            fprintf(fp, ">contig_%d[]%s", results[i].idx, s);
+            fflush(fp); // Flush output periodically
             printed[pc++] = s;
         } else {
             free(s);
