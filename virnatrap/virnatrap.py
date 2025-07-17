@@ -105,7 +105,8 @@ def extract_contigs(invars, large_file_thr=1000000):
     # Load model and process reads
     model = load_virus_model(model_path)
     encodings, seqs = proc_fastq(inpath)
-    scores = list(model.predict(encodings))
+    # Flatten predictions to Python floats
+    scores = model.predict(encodings).flatten().tolist()
 
     # Select seeds above threshold
     seeds = [(seqs[i], scores[i]) for i in range(len(scores)) if scores[i] > THRESHOLD]
