@@ -18,8 +18,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 import glob
 from os.path import exists, join, basename
 
-# Configuration -------------------------------------------------------------------------------------------------------
-# Default threshold; override via command-line wrapper by setting virnatrap.THRESHOLD
+# Default threshold, overridden at runtime by run_virna_pred
 THRESHOLD = 0.7
 
 # Suppress TensorFlow logs
@@ -74,7 +73,7 @@ def proc_fastq(infile):
     seqs = [s[:med] for s in seqs]
     return encode_sequences(seqs), seqs
 
-# Placeholder assembly functions (original implementation should be retained)
+# Placeholder assembly functions --------------------------------------------------------------------------------------
 def assemble_right(*args, **kwargs): pass
 def assemble_left(*args, **kwargs): pass
 def assemble_read(*args, **kwargs): pass
@@ -93,13 +92,11 @@ def assemble_read_call_c(readsv, reads0, scores0, scoresv, filen):
     n = c_int(len(readsv[0]))
     arr_ch = make_clist(reads0)
     arr_chv = make_clist(readsv)
-    result = librd.assemble_read_loop(arr_f, arr_fv, arr_ch, arr_chv, n, m, len(scoresv), filen_c)
-    return result
+    return librd.assemble_read_loop(arr_f, arr_fv, arr_ch, arr_chv, n, m, len(scoresv), filen_c)
 
-# MAIN FUNCTION WITH SEED DUMP -----------------------------------------------------------------------------------------
+# Main functions ------------------------------------------------------------------------------------------------------
 def extract_contigs(invars, large_file_thr=1000000):
     inpath, outpath, fastmode, model_path = invars
-
     base = basename(inpath)
     contig_fn = join(outpath, base.replace('_unmapped.fastq', '_contigs.txt'))
     seed_fn   = join(outpath, base.replace('_unmapped.fastq', '_seeds.txt'))
@@ -120,8 +117,10 @@ def extract_contigs(invars, large_file_thr=1000000):
     print(f"Seed reads dumped to {seed_fn} with threshold {THRESHOLD}. Skipping contig assembly here.")
     return 1
 
+def run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads, threshold=0.7):
+    global THRESHOLD
+    THRESHOLD = threshold
 
-def run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads):
     infastq = glob.glob(join(inpath, '*.fastq'))
     outs = glob.glob(join(outpath, '*.txt'))
     processed = {basename(o).replace('_contigs.txt','').replace('_seeds.txt','') for o in outs}
