@@ -1,9 +1,9 @@
 import sys
 import os
 from os.path import isdir, isfile
-from .virnatrap import run_virna_pred
 import argparse
 import virnatrap
+from .virnatrap import run_virna_pred
 
 # CLI script for dumping seed reads before contig assembly
 DESCRIPTION = (
@@ -59,8 +59,7 @@ def virnatrap_predict():
     fastmode = bool(args.fastmode)
     multi_proc = bool(args.multi_proc)
     num_threads = args.num_threads
-    # Set threshold in virnatrap module
-    virnatrap.THRESHOLD = args.threshold
+    threshold = args.threshold
 
     # Determine model path
     if args.model_path and isfile(args.model_path):
@@ -71,9 +70,9 @@ def virnatrap_predict():
         if args.model_path:
             print(f"Model '{args.model_path}' not found; using default model at {default_model}.")
 
-    # Run the pipeline
-    print(f"Reading FASTQ files from '{inpath}' with threshold {virnatrap.THRESHOLD}...")
-    run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads)
+    # Run the pipeline with threshold
+    print(f"Reading FASTQ files from '{inpath}' with threshold {threshold}...")
+    run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads, threshold)
     print("Done.")
 
 
