@@ -148,30 +148,31 @@ def proc_fastq(infile):
     seqs = [s[:med] for s in seqs]
     return encode_sequences(seqs), seqs
 
-# Orchestrator -----------------------------------------------------------------------------------------------
+from functools import partial
+
+# Updated run_virna_pred to avoid pickling lambda
 def run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads, dump_seeds=False):
-    infs = glob.glob(os.path.join(inpath, '*.fastq'))
-    outs = glob.glob(os.path.join(outpath, '*.txt'))
+    print("starting now")
+    # Gather input and output files
+    infs = list(set([f for f in glob.glob(inpath + '/*.fastq')]))
+    outs = glob.glob(outpath + '/*.txt')
     bases_in = {os.path.basename(f).replace('_unmapped.fastq','') for f in infs}
     bases_out = {os.path.basename(f).replace('_contigs.txt','') for f in outs}
     to_process = [f for f in infs if os.path.basename(f).replace('_unmapped.fastq','') not in bases_out]
 
     args = [[f, outpath, fastmode, model_path] for f in to_process]
+
+    print('starting_prediction...')
     if multi_proc:
         freeze_support()
-        Pool(processes=num_threads).map(lambda iv: extract_contigs(iv, dump_seeds=dump_seeds), args)
+        pool = mp.Pool(processes=num_threads)
+        # Use partial instead of lambda for pickleability
+        func = partial(extract_contigs, dump_seeds=dump_seeds)
+        pool.map(func, args)
+        pool.close()
+        pool.join()
     else:
         for iv in args:
             extract_contigs(iv, dump_seeds=dump_seeds)
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=DESCRIPTION)
-    parser.add_argument('inpath')
-    parser.add_argument('outpath')
-    parser.add_argument('--fast', action='store_true')
-    parser.add_argument('--multi', action='store_true')
-    parser.add_argument('--model', required=True)
-    parser.add_argument('--threads', type=int, default=1)
-    parser.add_argument('--dump-seeds', action='store_true', help='Write raw 48bp seeds before assembly')
-    args = parser.parse_args()
-    run_virna_pred(args.inpath, args.outpath, args.fast, args.multi, args.model, args.threads, args.dump_seeds)
+    print("Done processing")
