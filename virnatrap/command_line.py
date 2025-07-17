@@ -1,7 +1,7 @@
 import sys
 import os
 from os.path import isdir, isfile
-from .virnatrap import run_virna_pred
+from virnatrap.virnatrap import run_virna_pred
 import argparse
 import virnatrap
 
