@@ -5,33 +5,22 @@ Model classes and functions to identify viral reads and dump seed reads before c
 import os
 import re
 import sys
-import argparse
 from multiprocessing import Pool, freeze_support
 import multiprocessing as mp
 import numpy as np
-from pkg_resources import resource_filename
-from collections import OrderedDict
 import random
 import tensorflow as tf
 import ctypes
-from ctypes import *
+from ctypes import c_char_p, c_int, CDLL
 from tensorflow import get_logger, autograph
-from tensorflow import keras
-from tensorflow.keras import Sequential
-from tensorflow.keras.layers import *
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 import glob
-from os.path import exists
+from os.path import exists, join, basename
 
-# Parse threshold from CLI ------------------------------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description="Dump seed reads before contig assembly with configurable threshold")
-parser.add_argument(
-    "--threshold", type=float, default=0.7,
-    help="Prediction score threshold for selecting seed reads"
-)
-args = parser.parse_args()
-THRESHOLD = args.threshold
+# Configuration -------------------------------------------------------------------------------------------------------
+# Default threshold; override via command-line wrapper by setting virnatrap.THRESHOLD
+THRESHOLD = 0.7
 
 # Suppress TensorFlow logs
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -40,7 +29,7 @@ autograph.set_verbosity(0)
 
 # Globals -------------------------------------------------------------------------------------------------------------
 DEFAULT_NUC_ORDER = {y: x for x, y in enumerate(["A", "T", "C", "G"])}
-NUCLEOTIDES = sorted([x for x in DEFAULT_NUC_ORDER.keys()])
+NUCLEOTIDES = list(DEFAULT_NUC_ORDER.keys())
 SEGMENT_LENGTH = 48
 SEARCHSUBLEN = 24
 PWD = os.getcwd()
@@ -56,16 +45,6 @@ def handle_non_ATGC(sequence):
     assert len(ret) == len(sequence)
     return ret
 
-def pad_sequence(sequence, source_sequence, length=SEGMENT_LENGTH):
-    assert len(sequence) < length
-    assert sequence == source_sequence or len(source_sequence) > length
-    if len(source_sequence) > length:
-        ret = source_sequence[-length:]
-    else:
-        ret = (source_sequence * ((length // len(sequence)) + 1))[:length]
-    assert len(ret) == length
-    return ret
-
 def encode_sequence(sequence, nuc_order=None):
     if nuc_order is None:
         nuc_order = DEFAULT_NUC_ORDER
@@ -78,31 +57,8 @@ def encode_sequences(sequences, nuc_order=None, segment_length=SEGMENT_LENGTH):
     encoded = [encode_sequence(s, nuc_order)[0] for s in sequences]
     return np.array(pad_sequences(encoded, maxlen=segment_length, padding='post'))
 
-def save_model(model, model_path):
-    model.save(model_path + '.h5')
-
-def load_model_keras(model_path):
-    return load_model(model_path)
-
-# Assembly functions --------------------------------------------------------------------------------------------------
-def assemble_right(read, read_list, score_list, score_read=1, sc_thr=0.5, runs=5000, sublen=SEARCHSUBLEN):
-    # ... original implementation ...
-    pass  # placeholder
-
-def assemble_left(read, read_list, score_list, scores_read, sc_thr=0.5, runs=5000, sublen=SEARCHSUBLEN):
-    # ... original implementation ...
-    pass  # placeholder
-
-def assemble_read(read, read_list, score_list, score_read):
-    # ... original implementation ...
-    pass  # placeholder
-
-def assemble_read_loop(readsv, reads0, scores0, scoresv, filen, lenthr=48):
-    # ... original implementation ...
-    pass  # placeholder
-
 def load_virus_model(model_path):
-    return load_model_keras(model_path)
+    return load_model(model_path)
 
 def filter_sequences(seqs):
     bad = ['A'*SEARCHSUBLEN, 'C'*SEARCHSUBLEN, 'G'*SEARCHSUBLEN, 'T'*SEARCHSUBLEN]
@@ -118,35 +74,45 @@ def proc_fastq(infile):
     seqs = [s[:med] for s in seqs]
     return encode_sequences(seqs), seqs
 
+# Placeholder assembly functions (original implementation should be retained)
+def assemble_right(*args, **kwargs): pass
+def assemble_left(*args, **kwargs): pass
+def assemble_read(*args, **kwargs): pass
+def assemble_read_loop(*args, **kwargs): pass
+
 def make_clist(lst):
     return (c_char_p * len(lst))(*[x.encode() for x in lst])
 
 def assemble_read_call_c(readsv, reads0, scores0, scoresv, filen):
-    # ... original implementation ...
-    pass  # placeholder
+    librd = CDLL(join(PWD, "src/assemble_read_c.so"))
+    librd.connect()
+    arr_f = (ctypes.c_float * len(scores0))(*scores0)
+    arr_fv = (ctypes.c_float * len(scoresv))(*scoresv)
+    filen_c = c_char_p(filen.encode())
+    m = c_int(len(reads0))
+    n = c_int(len(readsv[0]))
+    arr_ch = make_clist(reads0)
+    arr_chv = make_clist(readsv)
+    result = librd.assemble_read_loop(arr_f, arr_fv, arr_ch, arr_chv, n, m, len(scoresv), filen_c)
+    return result
 
 # MAIN FUNCTION WITH SEED DUMP -----------------------------------------------------------------------------------------
 def extract_contigs(invars, large_file_thr=1000000):
     inpath, outpath, fastmode, model_path = invars
 
-    # Prepare output filenames
-    base = os.path.basename(inpath)
-    contig_fn = os.path.join(outpath, base.replace('_unmapped.fastq', '_contigs.txt'))
-    seed_fn  = os.path.join(outpath, base.replace('_unmapped.fastq', '_seeds.txt'))
+    base = basename(inpath)
+    contig_fn = join(outpath, base.replace('_unmapped.fastq', '_contigs.txt'))
+    seed_fn   = join(outpath, base.replace('_unmapped.fastq', '_seeds.txt'))
 
-    # Skip if already processed
     if exists(contig_fn) or exists(seed_fn):
         return 0
 
-    # Load and score reads
     model = load_virus_model(model_path)
     encoded_c, seqs = proc_fastq(inpath)
     scores = list(model.predict(encoded_c))
 
-    # Select seeds
     seeds = [(seqs[i], scores[i]) for i in range(len(scores)) if scores[i] > THRESHOLD]
 
-    # Dump seeds to file
     with open(seed_fn, 'w') as sf:
         for seq, score in seeds:
             sf.write(f">{score}\n{seq}\n")
@@ -156,10 +122,10 @@ def extract_contigs(invars, large_file_thr=1000000):
 
 
 def run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads):
-    infastq = list(set(glob.glob(os.path.join(inpath, '*.fastq'))))
-    outs = glob.glob(os.path.join(outpath, '*.txt'))
-    processed = {os.path.basename(o).replace('_contigs.txt','').replace('_seeds.txt','') for o in outs}
-    to_process = [f for f in infastq if os.path.basename(f).replace('_unmapped.fastq','') not in processed]
+    infastq = glob.glob(join(inpath, '*.fastq'))
+    outs = glob.glob(join(outpath, '*.txt'))
+    processed = {basename(o).replace('_contigs.txt','').replace('_seeds.txt','') for o in outs}
+    to_process = [f for f in infastq if basename(f).replace('_unmapped.fastq','') not in processed]
 
     print('starting_prediction...')
     if multi_proc:
