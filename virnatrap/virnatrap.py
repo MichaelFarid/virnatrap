@@ -5,6 +5,7 @@ Model classes and functions to identify viral reads and dump seed reads before c
 import os
 import re
 import sys
+import argparse
 from multiprocessing import Pool, freeze_support
 import multiprocessing as mp
 import numpy as np
@@ -21,8 +22,16 @@ from tensorflow.keras.layers import *
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 import glob
-import argparse
 from os.path import exists
+
+# Parse threshold from CLI ------------------------------------------------------------------------------------------------
+parser = argparse.ArgumentParser(description="Dump seed reads before contig assembly with configurable threshold")
+parser.add_argument(
+    "--threshold", type=float, default=0.7,
+    help="Prediction score threshold for selecting seed reads"
+)
+args = parser.parse_args()
+THRESHOLD = args.threshold
 
 # Suppress TensorFlow logs
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -135,15 +144,14 @@ def extract_contigs(invars, large_file_thr=1000000):
     scores = list(model.predict(encoded_c))
 
     # Select seeds
-    threshold = 0.7
-    seeds = [(seqs[i], scores[i]) for i in range(len(scores)) if scores[i] > threshold]
+    seeds = [(seqs[i], scores[i]) for i in range(len(scores)) if scores[i] > THRESHOLD]
 
     # Dump seeds to file
     with open(seed_fn, 'w') as sf:
         for seq, score in seeds:
             sf.write(f">{score}\n{seq}\n")
 
-    print(f"Seed reads dumped to {seed_fn}. Skipping contig assembly here.")
+    print(f"Seed reads dumped to {seed_fn} with threshold {THRESHOLD}. Skipping contig assembly here.")
     return 1
 
 
