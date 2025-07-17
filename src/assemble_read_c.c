@@ -32,7 +32,7 @@ static inline kmer_t encode_kmer(const char *kmer) {
             case 'C': x |= 1; break;
             case 'G': x |= 2; break;
             case 'T': x |= 3; break;
-            default:  break;  // 'A' or 'N'
+            default:  break;
         }
     }
     return x;
@@ -226,8 +226,7 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
     int rc = 0;
     for (int i = 0; i < nvr; ++i) {
         // Progress indicator
-        fprintf(stderr, "[Progress] Seed %d of %d
-", i+1, nvr);
+        fprintf(stderr, "[Progress] Seed %d of %d\n", i+1, nvr);
         fflush(stderr);
         int *usedl = calloc(num_reads, sizeof(int));
         int *usedr = calloc(num_reads, sizeof(int));
@@ -263,7 +262,7 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
             if (strstr(printed[j], s)) { is_sub = true; break; }
         }
         if (!is_sub) {
-            fprintf(fp, ">contig_%d[]%s", results[i].idx, s);
+            fprintf(fp, ">contig_%d[]\n%s\n", results[i].idx, s);
             fflush(fp); // Flush output periodically
             printed[pc++] = s;
         } else {
@@ -278,7 +277,8 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
     for (int h = 0; h < TABLE_SIZE; ++h) {
         for (kmer_entry *e = hashtable[h]; e; ) {
             kmer_entry *tmp = e->next;
-            free(e->idxs); free(e);
+            free(e->idxs);
+            free(e);
             e = tmp;
         }
     }
