@@ -72,15 +72,22 @@ static kmer_entry *get_bucket(uint64_t key) {
 
 // Build k-mer index from all reads (length SEGMENT_LENGTH each)
 static void build_kmer_index(char **reads, int num_reads) {
+    fprintf(stderr, "[C] Building k-mer index for %d reads...\n", num_reads);
+    fflush(stderr);
     char buf[SUBLEN+1];
     for (int i = 0; i < num_reads; ++i) {
+        if (i % 10 == 0) {
+            fprintf(stderr, "[C] Indexed %d/%d reads\n", i, num_reads);
+            fflush(stderr);
+        }
         for (int j = 0; j <= SEGMENT_LENGTH - SUBLEN; ++j) {
             memcpy(buf, reads[i] + j, SUBLEN);
             buf[SUBLEN] = '\0';
-            uint64_t key = encode_kmer(buf);
-            add_kmer(key, i);
+            add_kmer(encode_kmer(buf), i);
         }
     }
+    fprintf(stderr, "[C] K-mer index built\n");
+    fflush(stderr);
 }
 
 // Find best right extension for sb0: returns true if found
@@ -155,7 +162,7 @@ static struct ret assemble_right(const char *seed, char **reads, float *scores, 
     int cnt = 0;
     while (cnt < RUNS && (totsc/numel) > SCORE_THR) {
         int idx, pos;
-        if (!find_sub_right(used, sb0, reads, num_reads, &idx, &pos)) break;
+        if (!find_sub_right(used, sb0, readings, num_reads, &idx, &pos)) break;
         used[idx] = 1;
         memcpy(contig + clen, reads[idx] + pos + SUBLEN, SEGMENT_LENGTH);
         clen += SEGMENT_LENGTH;
@@ -197,12 +204,14 @@ static struct ret assemble_left(const char *seed, char **reads, float *scores, i
 
 // Main loop: parallel over seeds, write to file once
 int assemble_read_loop(float *f_arr, float *f_arr2, char *ch_arr[], char *ch_arr2[], int num_reads, int nvr, const char *fname) {
-    fprintf(stderr, "[C] Starting assembly: reads=%d, seeds=%d, out=%s\n", num_reads, nvr, fname);
+    char outbuf[1024];
+    strncpy(outbuf, fname, sizeof(outbuf)-1);
+    outbuf[sizeof(outbuf)-1] = '\0';
+    fprintf(stderr, "[C] Starting assembly: reads=%d, seeds=%d, out=%s\n", num_reads, nvr, outbuf);
     fflush(stderr);
     build_kmer_index(ch_arr, num_reads);
-    fprintf(stderr, "[C] K-mer index built\n"); fflush(stderr);
 
-    FILE *fp = fopen(fname, "w");
+    FILE *fp = fopen(outbuf, "w");
     if (!fp) { perror("fopen"); return -1; }
 
     omp_lock_t lock;
@@ -230,7 +239,10 @@ int assemble_read_loop(float *f_arr, float *f_arr2, char *ch_arr[], char *ch_arr
         free(rl.c);
         free(used);
         #pragma omp critical
-        { fputc('.', stderr); fflush(stderr); }
+        {
+            fputc('.', stderr);
+            fflush(stderr);
+        }
     }
 
     omp_destroy_lock(&lock);
@@ -247,7 +259,8 @@ int assemble_read_loop(float *f_arr, float *f_arr2, char *ch_arr[], char *ch_arr
         }
     }
 
-    fprintf(stderr, "[C] Assembly complete\n"); fflush(stderr);
+    fprintf(stderr, "[C] Assembly complete\n");
+    fflush(stderr);
     return 1;
 }
 
