@@ -204,8 +204,13 @@ def assemble_left(read, read_list, score_list, scores_read, sc_thr=0.5, runs=500
     sb0 = read[:sublen]
     flag = True
     cnt = 0
+    print("test worked")
     while flag and cnt < runs:
-        ids = [i for i in range(len(read_list)) if sb0 in read_list[i]]
+        kmer_index = defaultdict(list)
+        for idx, seq in enumerate(raw_reads):
+            for i in range(len(seq) - SEARCHSUBLEN + 1):
+                kmer_index[seq[i:i+SEARCHSUBLEN]].append(idx)
+        ids = kmer_index.get(sb0, [])
         strings_with_substring = [read_list[i] for i in ids]
         score0 = [score_list[i] for i in ids]
         pos = [sb.find(sb0) for sb in strings_with_substring]
