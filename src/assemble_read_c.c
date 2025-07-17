@@ -236,3 +236,8 @@ int assemble_read_loop(float *f_arr, float *f_arr2, char *ch_arr[], char *ch_arr
     }
     return 1;
 }
+
+// Stub for Python ctypes lookup
+char* assemble_read() {
+    return NULL;
+}
