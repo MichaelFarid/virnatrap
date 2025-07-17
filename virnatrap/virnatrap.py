@@ -1,11 +1,12 @@
 """
-Model classes and functions to identify viral reads and dump seed windows before contig assembly
+Model classes and functions to identify viral reads and dump seed windows
 """
 # Imports --------------------------------------------------------------------------------------------------------------
 import os
 import re
 import sys
-from multiprocessing import Pool, freeze_support
+import glob
+from multiprocessing import freeze_support
 import multiprocessing as mp
 import numpy as np
 import random
@@ -15,7 +16,6 @@ from ctypes import c_char_p, c_int, CDLL
 from tensorflow import get_logger, autograph
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-import glob
 from os.path import exists, join, basename
 
 # Default threshold, overridden at runtime by run_virna_pred
@@ -29,10 +29,7 @@ autograph.set_verbosity(0)
 # Globals -------------------------------------------------------------------------------------------------------------
 DEFAULT_NUC_ORDER = {y: x for x, y in enumerate(["A", "T", "C", "G"])}
 NUCLEOTIDES = list(DEFAULT_NUC_ORDER.keys())
-# Window size to score / dump
-SEGMENT_LENGTH = 48
-# Minimum contig length (unused here)
-# SEARCHSUBLEN = 24
+SEGMENT_LENGTH = 48  # window size for seed extraction
 PWD = os.getcwd()
 
 # Utility functions ---------------------------------------------------------------------------------------------------
@@ -60,7 +57,7 @@ def load_virus_model(model_path):
     return load_model(model_path)
 
 def filter_sequences(seqs):
-    bad = ['A'*SEGMENT_LENGTH, 'C'*SEGMENT_LENGTH, 'G'*SEGMENT_LENGTH, 'T'*SEGMENT_LENGTH]
+    bad = ["A"*SEGMENT_LENGTH, "C"*SEGMENT_LENGTH, "G"*SEGMENT_LENGTH, "T"*SEGMENT_LENGTH]
     return [s for s in seqs if all(b not in s for b in bad)]
 
 def proc_fastq(infile):
@@ -98,50 +95,50 @@ def assemble_read_call_c(readsv, reads0, scores0, scoresv, filen):
 def extract_contigs(invars, large_file_thr=1000000):
     inpath, outpath, fastmode, model_path = invars
     base = basename(inpath)
-    contig_fn = join(outpath, base.replace('_unmapped.fastq', '_contigs.txt'))
-    seed_fn   = join(outpath, base.replace('_unmapped.fastq', '_seeds.txt'))
+    sample = base.replace('_unmapped.fastq', '')
+    seed_fasta = join(outpath, f"{sample}_seeds.txt")
 
-    # Skip if already processed
-    if exists(contig_fn) or exists(seed_fn):
-        return 0
+    # Skip if already dumped
+    if exists(seed_fasta):
+        return seed_fasta
 
     # Load model and process reads
     model = load_virus_model(model_path)
-    _, seqs = proc_fastq(inpath)
-    # Score each read (use full-read scoring)
-    encodings, _ = proc_fastq(inpath)
+    encodings, seqs = proc_fastq(inpath)
     scores = list(model.predict(encodings))
 
     # Select seeds above threshold
     seeds = [(seqs[i], scores[i]) for i in range(len(scores)) if scores[i] > THRESHOLD]
 
-    # Dump each window (first 48bp and last 48bp) separately
-    with open(seed_fn, 'w') as sf:
+    # Dump seed windows in FASTA
+    with open(seed_fasta, 'w') as sf:
         for idx, (seq, score) in enumerate(seeds):
             first48 = seq[:SEGMENT_LENGTH]
             last48  = seq[-SEGMENT_LENGTH:]
-            sf.write(f">seed{idx}_thr{score:.4f}_1\n{first48}\n")
-            sf.write(f">seed{idx}_thr{score:.4f}_2\n{last48}\n")
+            sf.write(f">{sample}_seed{idx}_1_thr{score:.4f}\n{first48}\n")
+            sf.write(f">{sample}_seed{idx}_2_thr{score:.4f}\n{last48}\n")
 
-    print(f"Seed windows dumped to {seed_fn} with threshold {THRESHOLD}.")
-    return 1
+    print(f"Seeds dumped to {seed_fasta} with threshold {THRESHOLD}.")
+    return seed_fasta
+
 
 def run_virna_pred(inpath, outpath, fastmode, multi_proc, model_path, num_threads, threshold=0.7):
     global THRESHOLD
     THRESHOLD = threshold
 
-    infastq = glob.glob(join(inpath, '*.fastq'))
-    outs = glob.glob(join(outpath, '*.txt'))
-    processed = {basename(o).replace('_contigs.txt','').replace('_seeds.txt','') for o in outs}
-    to_process = [f for f in infastq if basename(f).replace('_unmapped.fastq','') not in processed]
+    fastq_files = glob.glob(join(inpath, '*.fastq'))
+    processed = {basename(f).split('_seeds.txt')[0] for f in glob.glob(join(outpath, '*_seeds.txt'))}
 
-    print('starting_prediction...')
+    print('starting seed extraction...')
     if multi_proc:
         freeze_support()
         pool = mp.Pool(processes=num_threads)
-        pool.map(extract_contigs, [[f, outpath, fastmode, model_path] for f in to_process])
+        pool.map(extract_contigs, [[f, outpath, fastmode, model_path] for f in fastq_files if basename(f).replace('_unmapped.fastq','') not in processed])
     else:
-        for f in to_process:
+        for f in fastq_files:
+            sample = basename(f).replace('_unmapped.fastq','')
+            if sample in processed:
+                continue
             extract_contigs([f, outpath, fastmode, model_path])
 
-    print('Done processing')
+    print('Seed extraction complete.')
