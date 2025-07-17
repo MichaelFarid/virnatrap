@@ -193,6 +193,11 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
     char outbuf[1024]; strncpy(outbuf, fname, sizeof(outbuf)-1); outbuf[sizeof(outbuf)-1] = '\0';
     FILE *fp = fopen(outbuf, "w");
     if (!fp) { perror("fopen"); return -1; }
+    // Buffer to track printed contigs and filter substrings
+    char **printed = calloc(nvr, sizeof(char*));
+    int printed_count = 0;
+
+    // Assemble each seed("fopen"); return -1; }
     // Assemble each seed
     for (int i = 0; i < nvr; ++i) {
         int *usedl = calloc(num_reads, sizeof(int));
