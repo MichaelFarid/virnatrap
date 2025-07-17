@@ -249,6 +249,26 @@ int assemble_read_loop(float *f_arr, float *f_arr2,
         // Clean up used arrays
         free(used_right);
         free(used_left);
+
+        // Merge left and right assemblies and print
+        int seed_len = strlen(ch_arr2[i]);
+        int left_ext_len = rl.len - seed_len;
+        int right_len = rr.len;
+        int full_len = left_ext_len + right_len;
+        float avg_sc = (rl.totsc/rl.numel + rr.totsc/rr.numel) * 0.5f;
+        if (full_len >= SEGMENT_LENGTH && avg_sc > SCORE_THR) {
+            char *full = malloc(full_len + 1);
+            memcpy(full, rl.c, left_ext_len);
+            memcpy(full + left_ext_len, rr.c, right_len);
+            full[full_len] = ' ';
+            printed[printed_count++] = full;
+            fprintf(fp, ">contig_%d[]
+%s
+", i, full);
+        }
+
+        free(rr.c);
+        free(rl.c);
     }
     for (int k = 0; k < printed_count; ++k) free(printed[k]);
     free(printed);
